@@ -146,7 +146,11 @@ export default function DashboardPage() {
         });
 
         if (!response.ok) {
-          if (response.status === 401) {
+          if (response.status === 402) {
+            // No paid subscription for this organization (yet): go to checkout.
+            router.push('/billing');
+            return;
+          } else if (response.status === 401) {
             setError('Niet geautoriseerd. Log opnieuw in.');
           } else if (response.status === 503) {
             // Database not configured, use mock data

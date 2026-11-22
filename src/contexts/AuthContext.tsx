@@ -17,7 +17,7 @@ interface AuthContextType {
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, name: string, password: string, companyName: string) => Promise<void>;
+  register: (input: { email: string; name: string; password: string; companyName: string; kvkNumber?: string }) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -103,17 +103,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('auth_token', data.token);
     localStorage.setItem('auth_user', JSON.stringify(data.user));
     
-    // Redirect based on onboarding status
-    // If onboardingCompleted is false or undefined, redirect to wizard
-    if (!data.user.onboardingCompleted) {
+    // No paid subscription yet (or it lapsed): go to billing. Otherwise continue onboarding.
+    if (data.entitlement && data.entitlement.entitled === false) {
+      router.push('/billing');
+    } else if (!data.user.onboardingCompleted) {
       router.push('/rie/new');
     } else {
       router.push('/dashboard');
     }
   };
 
-  const register = async () => {
-    throw new Error('Registratie is uitgeschakeld. Neem contact op met de beheerder.');
+  // Creates the organization and its first user, signs in, and continues to checkout.
+  const register: AuthContextType['register'] = async (input) => {
+    const response = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || 'Registratie mislukt');
+    }
+    setToken(data.token);
+    setUser(data.user);
+    localStorage.setItem('auth_token', data.token);
+    localStorage.setItem('auth_user', JSON.stringify(data.user));
+    router.push('/billing?start=1');
   };
 
   const logout = () => {

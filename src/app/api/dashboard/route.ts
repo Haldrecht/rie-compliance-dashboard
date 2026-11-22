@@ -1,26 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getUserFromRequest } from '@/lib/auth';
+import { requireCustomer } from '@/lib/tenant';
 import { calculateComplianceScore } from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
   try {
-    // Check if database is available
-    if (!prisma || !process.env.DATABASE_URL) {
-      return NextResponse.json(
-        { error: 'Database not configured. Using mock data in frontend.' },
-        { status: 503 }
-      );
-    }
-
-    const user = getUserFromRequest(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const guard = await requireCustomer(request);
+    if (!guard.ok) return guard.response;
+    const { ctx } = guard;
 
     // Get company data
     const company = await prisma.company.findUnique({
-      where: { id: user.companyId },
+      where: { id: ctx.companyId },
       include: {
         assessments: {
           where: { status: 'COMPLETED' },

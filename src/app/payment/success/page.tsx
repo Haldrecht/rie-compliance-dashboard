@@ -1,99 +1,71 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { authenticatedFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import Link from 'next/link';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+
+// Stripe Checkout return. Access is confirmed from the server (webhook, or reconciliation of this
+// session with Stripe), never assumed from reaching this page.
+const MAX_ATTEMPTS = 10;
 
 export default function PaymentSuccessPage() {
+  const { token, isAuthenticated, loading: authLoading, user } = useAuth();
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const sessionId = searchParams.get('session_id');
-  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [state, setState] = useState<'checking' | 'active' | 'pending' | 'login'>('checking');
 
   useEffect(() => {
-    if (!sessionId) {
-      setStatus('error');
+    if (authLoading) return;
+    if (!isAuthenticated) {
+      setState('login');
       return;
     }
+    const sessionId = new URLSearchParams(window.location.search).get('session_id') ?? '';
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const check = async () => {
+      attempt += 1;
+      try {
+        const res = await authenticatedFetch(`/api/billing/status?session_id=${encodeURIComponent(sessionId)}`, {}, token);
+        const data = await res.json();
+        if (data.entitled) {
+          setState('active');
+          return;
+        }
+      } catch {
+        // retry below
+      }
+      if (attempt >= MAX_ATTEMPTS) setState('pending');
+      else timer = setTimeout(check, Math.min(1000 * attempt, 5000));
+    };
+    void check();
+    return () => clearTimeout(timer);
+  }, [authLoading, isAuthenticated, token]);
 
-    // Give webhook time to process
-    setTimeout(() => {
-      setStatus('success');
-    }, 2000);
-  }, [sessionId]);
+  const next = user?.onboardingCompleted ? '/dashboard' : '/rie/new';
 
   return (
     <div className="min-h-screen gradient-brand flex items-center justify-center px-6 py-12">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-2xl text-center">
-            {status === 'loading' && 'Betaling verwerken...'}
-            {status === 'success' && 'Betaling succesvol!'}
-            {status === 'error' && 'Betaling mislukt'}
+            {state === 'active' ? 'Betaling ontvangen' : state === 'pending' ? 'Betaling wordt verwerkt' : state === 'login' ? 'Log in om verder te gaan' : 'Betaling controleren...'}
           </CardTitle>
           <CardDescription className="text-center">
-            {status === 'loading' && 'Uw licentie wordt toegewezen...'}
-            {status === 'success' && 'Uw account is geactiveerd. U kunt nu inloggen.'}
-            {status === 'error' && 'Er is een probleem opgetreden. Neem contact op als de betaling is verwerkt.'}
+            {state === 'active' && 'Uw abonnement is actief. U kunt nu uw RI&E opstellen.'}
+            {state === 'pending' && 'Dit duurt langer dan verwacht. U ontvangt toegang zodra Stripe de betaling bevestigt.'}
+            {state === 'login' && 'Uw betaling is ontvangen door Stripe. Log in om uw organisatie te openen.'}
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          {status === 'success' && (
-            <div className="space-y-4">
-              <div className="p-4 bg-green-50 border border-green-200 rounded-md text-center">
-                <p className="text-green-800 font-medium">
-                  ✅ Uw licentie is geactiveerd
-                </p>
-                <p className="text-green-600 text-sm mt-2">
-                  U kunt nu inloggen met uw account
-                </p>
-              </div>
-              <Button
-                onClick={() => router.push('/login')}
-                className="w-full"
-              >
-                Naar inloggen
-              </Button>
-            </div>
-          )}
-
-          {status === 'error' && (
-            <div className="space-y-4">
-              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md text-center">
-                <p className="text-yellow-800 text-sm">
-                  Als uw betaling succesvol was, kan het even duren voordat uw account is geactiveerd.
-                  Probeer over een paar minuten opnieuw in te loggen.
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => router.push('/login')}
-                  className="flex-1"
-                >
-                  Inloggen
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => router.push('/register')}
-                  className="flex-1"
-                >
-                  Terug
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {status === 'loading' && (
-            <div className="text-center py-4">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-gold mx-auto"></div>
-            </div>
-          )}
+        <CardContent className="space-y-3">
+          {state === 'checking' && <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-gold mx-auto" />}
+          {state === 'active' && <Button className="w-full" onClick={() => router.push(next)}>{next === '/rie/new' ? 'RI&E starten' : 'Naar het dashboard'}</Button>}
+          {state === 'pending' && <Button variant="outline" className="w-full" onClick={() => window.location.reload()}>Opnieuw controleren</Button>}
+          {state === 'login' && <Button className="w-full" onClick={() => router.push('/login')}>Inloggen</Button>}
         </CardContent>
       </Card>
     </div>
   );
 }
-

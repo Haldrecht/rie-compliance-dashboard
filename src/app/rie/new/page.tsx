@@ -148,7 +148,13 @@ export default function NewRIEPage() {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (response.ok) {
-          const data = await response.json();
+          await response.json();
+          // Unpaid organizations go to checkout before spending time in the wizard.
+          const billing = await fetch('/api/billing/status', { headers: { Authorization: `Bearer ${token}` } });
+          if (billing.ok && !(await billing.json()).entitled) {
+            window.location.href = '/billing';
+            return;
+          }
           // Allow access if onboarding not completed, or if user wants to create another RI&E
           setCheckingOnboarding(false);
         }
@@ -377,6 +383,10 @@ export default function NewRIEPage() {
         },
         body: JSON.stringify({ title, rieData }),
       });
+      if (res.status === 402) {
+        window.location.href = '/billing';
+        return;
+      }
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         alert(j.error || 'Opslaan mislukt');

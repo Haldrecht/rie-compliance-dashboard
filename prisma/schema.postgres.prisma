@@ -96,6 +96,7 @@ model Company {
   email       String?
   website     String?
   kvkNumber   String?
+  stripeCustomerId String? @unique // Stripe Customer that pays for this organization
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -103,6 +104,7 @@ model Company {
   assessments Assessment[]
   risks       Risk[]
   actions     Action[]
+  subscription Subscription?
 
   @@map("companies")
 }
@@ -267,4 +269,49 @@ model License {
   @@map("licenses")
 }
 
+// ---------------------------------------------------------------------------
+// Order-to-cash: organization subscription entitlement driven by Stripe.
+// Stripe is the source of truth; these rows are a synced cache that gates access.
+// ---------------------------------------------------------------------------
+
+enum SubscriptionStatus {
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  PAUSED
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  companyId            String             @unique
+  company              Company            @relation(fields: [companyId], references: [id])
+  stripeSubscriptionId String             @unique
+  stripeCustomerId     String
+  stripePriceId        String?
+  status               SubscriptionStatus
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  // Stripe object version we last applied (event.created / fetch time, unix seconds).
+  // Older snapshots are ignored so out-of-order delivery cannot roll state back.
+  syncedAt             Int                @default(0)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@map("subscriptions")
+}
+
+// Processed Stripe webhook events, for duplicate-delivery idempotency.
+model StripeEvent {
+  id          String   @id // Stripe event id (evt_...)
+  type        String
+  outcome     String   // processed | ignored
+  detail      String?
+  processedAt DateTime @default(now())
+
+  @@map("stripe_events")
+}
 

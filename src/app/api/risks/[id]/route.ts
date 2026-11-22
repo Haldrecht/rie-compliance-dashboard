@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getUserFromRequest, requireAuth } from '@/lib/auth';
+import { withCustomer } from '@/lib/tenant';
 import { calculateRiskLevel } from '@/lib/utils';
 
 // GET /api/risks/[id] - Get a specific risk
-export const GET = requireAuth(async (request: NextRequest, user, { params }: { params: { id: string } }) => {
+export const GET = withCustomer<{ id: string }>(async (request: NextRequest, user, { params }) => {
   try {
     const risk = await prisma.risk.findFirst({
       where: {
@@ -46,7 +46,7 @@ export const GET = requireAuth(async (request: NextRequest, user, { params }: { 
 });
 
 // PUT /api/risks/[id] - Update a risk
-export const PUT = requireAuth(async (request: NextRequest, user, { params }: { params: { id: string } }) => {
+export const PUT = withCustomer<{ id: string }>(async (request: NextRequest, user, { params }) => {
   try {
     const body = await request.json();
     const {
@@ -124,7 +124,7 @@ export const PUT = requireAuth(async (request: NextRequest, user, { params }: { 
 });
 
 // DELETE /api/risks/[id] - Delete a risk
-export const DELETE = requireAuth(async (request: NextRequest, user, { params }: { params: { id: string } }) => {
+export const DELETE = withCustomer<{ id: string }>(async (request: NextRequest, user, { params }) => {
   try {
     // Check if risk exists and belongs to user's company
     const existingRisk = await prisma.risk.findFirst({

@@ -1,16 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getUserFromRequest, requireAuth } from '@/lib/auth';
+import { requireCustomer } from '@/lib/tenant';
 import { DocumentGenerator } from '@/lib/document-generator';
 
-export const POST = requireAuth(async (request: NextRequest, user) => {
+export const runtime = 'nodejs';
+
+// POST /api/reports/rie {assessmentId, format: 'pdf'|'docx'} — download a report for one of the
+// caller's own organization's assessments.
+export async function POST(request: NextRequest) {
+  const guard = await requireCustomer(request);
+  if (!guard.ok) return guard.response;
+  const { ctx } = guard;
   try {
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const { assessmentId, format = 'docx' } = body;
 
-    if (!assessmentId) {
+    if (typeof assessmentId !== 'string' || !assessmentId || (format !== 'pdf' && format !== 'docx')) {
       return NextResponse.json(
-        { error: 'Assessment ID is required' },
+        { error: 'assessmentId and format (pdf or docx) are required' },
         { status: 400 }
       );
     }
@@ -19,7 +26,7 @@ export const POST = requireAuth(async (request: NextRequest, user) => {
     const assessment = await prisma.assessment.findFirst({
       where: {
         id: assessmentId,
-        companyId: user.companyId,
+        companyId: ctx.companyId,
       },
       include: {
         company: true,
@@ -72,11 +79,11 @@ export const POST = requireAuth(async (request: NextRequest, user) => {
 
     if (format === 'pdf') {
       blob = await DocumentGenerator.generatePDFReport(reportData);
-      filename = `RI&E_${assessment.company.name}_${new Date().toISOString().split('T')[0]}.pdf`;
+      filename = `RI&E_${safeName(assessment.company.name)}_${new Date().toISOString().split('T')[0]}.pdf`;
       mimeType = 'application/pdf';
     } else {
       blob = await DocumentGenerator.generateRIEReport(reportData);
-      filename = `RI&E_${assessment.company.name}_${new Date().toISOString().split('T')[0]}.docx`;
+      filename = `RI&E_${safeName(assessment.company.name)}_${new Date().toISOString().split('T')[0]}.docx`;
       mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     }
 
@@ -86,7 +93,8 @@ export const POST = requireAuth(async (request: NextRequest, user) => {
     return new NextResponse(buffer, {
       headers: {
         'Content-Type': mimeType,
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Disposition': `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        'Cache-Control': 'private, no-store',
         'Content-Length': buffer.byteLength.toString(),
       },
     });
@@ -97,4 +105,8 @@ export const POST = requireAuth(async (request: NextRequest, user) => {
       { status: 500 }
     );
   }
-});
+}
+
+function safeName(name: string) {
+  return name.replace(/[^A-Za-z0-9 _.-]/g, '').trim().slice(0, 80) || 'organisatie';
+}
