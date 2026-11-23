@@ -295,3 +295,51 @@ test('database unavailable: clear failure, never sample data', async ({ page }) 
     server.kill();
   }
 });
+
+test('paid but webhook lost and tab closed: access is recovered, no second purchase', async ({ page, browser }) => {
+  const who = { email: `lost.${run}@synthetisch.test`, password: 'Verloren-webhook-1' };
+  await page.goto('/register');
+  await page.getByLabel('Organisatienaam').fill(`Verloren Webhook ${run} BV`);
+  await page.getByLabel('Uw naam').fill('Lars Synthetisch');
+  await page.getByLabel('Zakelijk e-mailadres').fill(who.email);
+  await page.getByLabel('Wachtwoord (minimaal 8 tekens)').fill(who.password);
+  await page.getByRole('button', { name: 'Doorgaan naar betalen' }).click();
+  await page.waitForURL(`${STANDIN}/pay/**`);
+
+  await standin('/__test/drop-webhooks', { drop: true });
+  try {
+    // The browser never reaches the success page (closed tab / lost connection).
+    await page.route('**/payment/success**', (route) => route.abort());
+    await page.getByLabel('Kaartnummer').fill('4242 4242 4242 4242');
+    await page.getByRole('button', { name: 'Betalen' }).click().catch(() => {});
+    // Wait until the stand-in has completed the payment (its webhooks were dropped), then close the tab
+    // while the success page is still blocked, so nothing reconciles from the browser.
+    await expect.poll(async () => ((await standin('/__test/events')) as Array<{ id: string }>).filter((e) => e.id === 'dropped').length).toBeGreaterThanOrEqual(3);
+    await page.close();
+    const company = (await q<{ id: string }>('select id from companies where name = $1', [`Verloren Webhook ${run} BV`]))[0];
+    expect(await q('select 1 from subscriptions where "companyId" = $1', [company.id])).toHaveLength(0);
+
+    // Later, from another device (fresh browser context, nothing stored): sign in and open billing.
+    const device = await browser.newContext({ baseURL: APP });
+    page = await device.newPage();
+    await page.goto('/login');
+    await page.getByPlaceholder('naam@bedrijf.nl').fill(who.email);
+    await page.getByPlaceholder('••••••••').fill(who.password);
+    await page.getByRole('button', { name: /inloggen/i }).click();
+    await page.waitForURL('**/billing');
+    await expect(page.getByText('Uw organisatie heeft een actief abonnement.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Betalen via Stripe' })).toHaveCount(0);
+    const subs = await q<{ status: string }>('select status from subscriptions where "companyId" = $1', [company.id]);
+    expect(subs).toEqual([{ status: 'ACTIVE' }]);
+    await page.getByRole('button', { name: 'Naar het dashboard' }).click();
+    await page.waitForURL(/\/(dashboard|rie\/new)$/);
+  } finally {
+    await standin('/__test/drop-webhooks', { drop: false });
+  }
+});
+
+test('staging preflight probe agrees with the running application', async () => {
+  const { probeOrigin } = await import('../scripts/staging-preflight.mjs');
+  const checks: Array<{ name: string; ok: boolean; detail?: string }> = await probeOrigin(APP);
+  expect(checks.filter((c) => !c.ok)).toEqual([]);
+});

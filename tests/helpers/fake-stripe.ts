@@ -12,6 +12,7 @@ type Sub = {
   object: 'subscription';
   customer: string;
   status: string;
+  created: number;
   cancel_at_period_end: boolean;
   metadata: Record<string, string>;
   items: { data: Array<{ price: { id: string }; current_period_end: number }> };
@@ -78,6 +79,11 @@ export class FakeStripe {
           if (!s) throw new Error(`No such subscription: ${id}`);
           return structuredClone(s);
         }) as any,
+        list: (async (params: any) => {
+          self.calls.push('subscriptions.list');
+          const data = [...self.subscriptions.values()].filter((s) => s.customer === params.customer).map((s) => structuredClone(s));
+          return { object: 'list', data, has_more: false };
+        }) as any,
       },
       invoices: {
         retrieve: (async (id: string) => {
@@ -108,6 +114,7 @@ export class FakeStripe {
       object: 'subscription',
       customer: session.customer,
       status,
+      created: Math.floor(Date.now() / 1000) + this.n, // strictly increasing, like real creation times
       cancel_at_period_end: false,
       metadata: session.params.subscription_data?.metadata ?? {},
       items: { data: [{ price: { id: session.params.line_items[0].price }, current_period_end: periodEnd }] },

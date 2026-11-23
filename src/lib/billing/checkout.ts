@@ -35,6 +35,14 @@ export async function createCheckoutForCompany(
   input: { companyId: string; userId: string; email: string; alreadyEntitled: boolean },
 ): Promise<{ url: string; sessionId: string }> {
   if (input.alreadyEntitled) throw new CheckoutError(409, 'already_subscribed', 'Deze organisatie heeft al een actief abonnement');
+  // A payment Stripe already has (webhook lost, customer never returned) must not be bought twice.
+  const recovered = await reconcileCustomer(prisma, stripe, input.companyId);
+  if (recovered === 'applied') {
+    const sub = await prisma.subscription.findUnique({ where: { companyId: input.companyId }, select: { status: true } });
+    if (sub && ['ACTIVE', 'TRIALING', 'PAST_DUE'].includes(sub.status)) {
+      throw new CheckoutError(409, 'already_subscribed', 'Deze organisatie heeft al een actief abonnement');
+    }
+  }
   const company = await prisma.company.findUnique({
     where: { id: input.companyId },
     select: { id: true, name: true, stripeCustomerId: true },
@@ -81,4 +89,29 @@ export async function reconcileCheckoutSession(
   const sub = await stripe.subscriptions.retrieve(subscriptionId);
   const outcome = await applySubscription(prisma, sub, now());
   return outcome === 'unmatched' ? 'pending' : outcome;
+}
+
+const PRIORITY: Record<string, number> = { active: 0, trialing: 1, past_due: 2, unpaid: 3, paused: 4, incomplete: 5, canceled: 6, incomplete_expired: 7 };
+
+/**
+ * Paid-but-no-access recovery. When the organization is not entitled but already has a Stripe customer,
+ * ask Stripe for that customer's subscriptions and apply the most relevant one. Covers a lost or
+ * delayed webhook when the customer never came back through the success page (closed tab, other
+ * device), and prevents a second purchase in that state. Only the organization's own customer is read.
+ */
+export async function reconcileCustomer(
+  prisma: PrismaClient,
+  stripe: StripeGateway,
+  companyId: string,
+  now: () => number = () => Math.floor(Date.now() / 1000),
+): Promise<'applied' | 'stale' | 'none'> {
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { stripeCustomerId: true } });
+  if (!company?.stripeCustomerId) return 'none';
+  const list = await stripe.subscriptions.list({ customer: company.stripeCustomerId, status: 'all', limit: 20 });
+  const candidates = list.data
+    .filter((s) => (s.metadata?.companyId ?? companyId) === companyId)
+    .sort((a, b) => (PRIORITY[a.status] ?? 9) - (PRIORITY[b.status] ?? 9) || b.created - a.created);
+  if (!candidates.length) return 'none';
+  const outcome = await applySubscription(prisma, candidates[0], now());
+  return outcome === 'unmatched' ? 'none' : outcome;
 }

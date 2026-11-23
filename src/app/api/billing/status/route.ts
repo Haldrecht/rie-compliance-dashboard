@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { requireCustomer, loadEntitlement } from '@/lib/tenant';
 import { billingConfig, stripeGateway } from '@/lib/billing/stripe';
-import { reconcileCheckoutSession } from '@/lib/billing/checkout';
+import { reconcileCheckoutSession, reconcileCustomer } from '@/lib/billing/checkout';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,6 +17,16 @@ export async function GET(request: NextRequest) {
 
   const sessionId = request.nextUrl.searchParams.get('session_id');
   let reconcile: string | undefined;
+  if (!ctx.entitlement.entitled && !sessionId) {
+    // Paid-but-no-access recovery without a session id (closed tab, other device, lost webhook).
+    try {
+      const config = billingConfig();
+      const recovered = await reconcileCustomer(prisma, stripeGateway(config.secretKey), ctx.companyId);
+      if (recovered !== 'none') reconcile = `customer:${recovered}`;
+    } catch (error) {
+      console.error('Customer reconciliation failed:', (error as Error).message);
+    }
+  }
   if (sessionId && !ctx.entitlement.entitled) {
     try {
       const config = billingConfig();

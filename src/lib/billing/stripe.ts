@@ -36,7 +36,7 @@ let cached: { key: string; client: Stripe } | null = null;
 export interface StripeGateway {
   customers: { create: Stripe['customers']['create'] };
   checkout: { sessions: { create: Stripe['checkout']['sessions']['create']; retrieve: Stripe['checkout']['sessions']['retrieve'] } };
-  subscriptions: { retrieve: Stripe['subscriptions']['retrieve'] };
+  subscriptions: { retrieve: Stripe['subscriptions']['retrieve']; list: Stripe['subscriptions']['list'] };
   invoices: { retrieve: Stripe['invoices']['retrieve'] };
   billingPortal: { sessions: { create: Stripe['billingPortal']['sessions']['create'] } };
   webhooks: { constructEvent: Stripe['webhooks']['constructEvent'] };

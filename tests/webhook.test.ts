@@ -134,7 +134,7 @@ describe('idempotency and ordering', () => {
     const original = gateway.subscriptions.retrieve;
     let failures = 1;
     const { setStripeGatewayForTests } = await import('@/lib/billing/stripe');
-    setStripeGatewayForTests({ ...gateway, subscriptions: { retrieve: (async (...args: Parameters<typeof original>) => {
+    setStripeGatewayForTests({ ...gateway, subscriptions: { list: gateway.subscriptions.list, retrieve: (async (...args: Parameters<typeof original>) => {
       if (failures-- > 0) throw new Error('connection reset');
       return original(...args);
     }) as typeof original } });

@@ -1,46 +1,74 @@
-# Dashboard entry points and checkout contract (for the marketing website)
+# Dashboard entry-route contract (for the marketing website)
 
-Status: implemented on branch `feat/o2c-vertical-slice`. Verified by `npm test` (SQLite and Postgres) and
-by the browser journey `npm run test:e2e` (real browser, production build, Postgres, Stripe stand-in).
-Not yet deployed, and not yet run against a real Stripe sandbox (no test keys available).
-Production base URL: `https://rie-compliance-dashboard.vercel.app` (live, but currently serving a build
-that predates this branch, so these routes are not available there until it is deployed).
+Status date: 2026-11-23. Branch `feat/o2c-vertical-slice` (draft PR #1). **Not deployed anywhere.**
 
-The website only links to the dashboard. It does not call Stripe, create sessions or handle prices:
-checkout is always started by the dashboard for a signed-in organization.
+> **Purchase links on the website must stay disabled** until the full journey has passed on staging with a
+> real Stripe test-mode purchase (see "Release gate" below). Until then the website keeps `appUrl` empty.
 
-## Links the website may use
+## Verification status per route
 
-| Purpose | URL | Notes |
+| Route | Locally (browser test, production build, Postgres, Stripe **stand-in**) | Staging (real Stripe test mode) | Production |
+| --- | --- | --- | --- |
+| `/register` | Verified | **Not verified** (no staging exists) | Old build: shows "registration disabled" |
+| `/login` | Verified | **Not verified** | Old build, no database configured: login cannot succeed |
+| `/billing` | Verified | **Not verified** | Does not exist |
+
+## Origin
+
+There is **no verified HTTPS dashboard origin yet**. The production URL serves an older build, and no staging
+deployment exists. The website's `appUrl` must remain empty until the release gate passes; at that point this
+document will name the verified origin. The origin will be a bare `https://` origin (the website rejects
+anything else, and Stripe webhooks require https).
+
+## Mapping to the website's config (Haldrecht/haldrecht PR #3, `RieConfig`)
+
+| Website key | Value | Notes |
 | --- | --- | --- |
-| Buy / start trial CTA | `{BASE}/register` | Creates organization + first user, then sends the customer to Stripe Checkout. |
-| Existing customer | `{BASE}/login` | Unpaid or lapsed organizations are sent to `/billing` after login. |
-| Billing management (returning customer) | `{BASE}/billing` | Requires sign-in. Unpaid: "Betalen via Stripe". Paid or lapsed: invoices plus "Betaalgegevens, facturen en opzeggen" (Stripe Customer Portal). |
+| `appUrl` | *(empty until the release gate passes)* | Then: the verified `https://` dashboard origin. |
+| `startPad` | `/register` | New customer: registration, then Stripe Checkout. |
+| `loginPad` | `/login` | Existing customer. |
+| *(optional, not in RieConfig yet)* | `/billing` | Returning customer: payment status, invoices, Stripe Customer Portal. |
 
-Do not link to `/payment/success`, `/billing?start=1`, `/dashboard`, `/rie/new` or `/reports/rie` from the
-website; the dashboard routes customers there itself.
+The website never calls Stripe, creates sessions or shows its own price logic; the dashboard does all of that.
+UTM and other unknown query parameters are ignored by these routes.
 
-Verified on 2026-11-23 against this branch: `/register`, `/login` and `/billing` exist and behave as
-described (browser test `e2e/customer-journey.spec.ts`). They are not live on the production URL yet.
+## Behavior the website can rely on
 
-Query parameters the dashboard understands on `/register`: `canceled=true` (shows "payment canceled").
-Unknown parameters are ignored, so UTM tags are safe.
+**New customer** — `/register` → account and organization created (exactly once) → `/billing?start=1` →
+Stripe Checkout → `/payment/success?session_id=…` → access confirmed by the server → `/rie/new` (RI&E wizard).
 
-## Is signup open?
+**Signup closed** — `GET {origin}/api/auth/register` returns `{"enabled": false}`; `/register` then shows
+"Account aanmaken uitgeschakeld". The website should show a contact CTA instead of "Buy" in that case.
 
-`GET {BASE}/api/auth/register` → `{"enabled": true|false}` (no auth, no side effects).
-When `false`, `/register` shows "Account aanmaken uitgeschakeld"; the website should show a contact CTA
-instead of "Buy". Signup is controlled by the dashboard env var `PUBLIC_SIGNUP_ENABLED`.
+**Existing customer** — `/login` → paid organization: `/dashboard` (or `/rie/new` if no RI&E yet);
+unpaid or lapsed: `/billing`.
 
-## Journey and redirects (all on the dashboard domain)
+**Checkout cancelled** — Stripe's cancel button returns to `/billing?canceled=1`: "De betaling is
+geannuleerd. Er is niets in rekening gebracht." The customer stays signed in and can retry with
+"Betalen via Stripe"; the same Stripe customer is reused. Abandoned sessions expire at Stripe with no charge.
 
-1. `/register` → `POST /api/auth/register` → signed in → `/billing?start=1`
-2. `/billing?start=1` → `POST /api/billing/checkout` → redirect to Stripe Checkout (hosted)
-3. Stripe success → `/payment/success?session_id=cs_...` → confirms with `GET /api/billing/status?session_id=...`
-   (webhook or direct reconciliation) → "RI&E starten" → `/rie/new`
-4. Stripe cancel → `/billing?canceled=1`
-5. `/rie/new` (wizard) → `POST /api/assessments` → `/dashboard`
-6. `/reports/rie` → `POST /api/reports/rie` → PDF or Word download
+**Payment declined** — the customer stays on Stripe Checkout with Stripe's error; no access is granted.
+
+**Paid but no access yet** (webhook delayed or lost, tab closed, other device) — access is recovered without
+support: the success page reconciles its checkout session with Stripe, and `/billing` (also reached via
+`/login`) asks Stripe for the organization's own subscriptions. A second purchase is refused
+(`already_subscribed`) while Stripe has an active subscription. Reaching the success URL by itself grants
+nothing.
+
+**Failed renewal** — access continues until 7 days after the paid period ends while Stripe retries; then
+`/billing` shows "De laatste betaling is mislukt". A successful retry restores access.
+
+**Cancellation** — via the Stripe Customer Portal from `/billing` ("Betaalgegevens, facturen en opzeggen"),
+at period end. After the period: `/billing` shows "beëindigd"; data and invoices are kept.
+
+## Release gate (when the website may enable purchase links)
+
+All of the following on the staging deployment, recorded in PR #1:
+1. `scripts/staging-preflight.mjs --probe` passes against the staging origin.
+2. One real Stripe test-mode purchase by a synthetic customer through `/register`.
+3. `npm run verify:sandbox -- <customer email>` passes (database agrees with Stripe).
+4. RI&E completed and PDF/Word reports downloaded on staging.
+5. Owner approval.
 
 ## API (dashboard-internal; listed so nothing is duplicated on the website)
 
@@ -50,32 +78,11 @@ instead of "Buy". Signup is controlled by the dashboard env var `PUBLIC_SIGNUP_E
 | POST | `/api/auth/register` | none | 201 `{user, token, entitlement, next: "/billing"}`; 403 `signup_disabled`; 409 `email_taken`; 400 `invalid_input` |
 | POST | `/api/auth/login` | none | 200 `{user, token, entitlement}` |
 | POST | `/api/billing/checkout` | Bearer | 200 `{url, sessionId}`; 409 `already_subscribed`; 503 `billing_unavailable` |
-| GET | `/api/billing/status[?session_id]` | Bearer | `{entitled, reason, subscription}` |
-| POST | `/api/billing/portal` | Bearer | 200 `{url}` (Stripe Customer Portal); 409 `no_billing_account` |
-| GET | `/api/billing/invoices` | Bearer | `{invoices: [...]}` for the caller's organization (also when lapsed) |
+| GET | `/api/billing/status[?session_id]` | Bearer | `{entitled, reason, subscription, canManageBilling}` |
+| POST | `/api/billing/portal` | Bearer | 200 `{url}`; 409 `no_billing_account` |
+| GET | `/api/billing/invoices` | Bearer | `{invoices}` for the caller's organization |
 | POST | `/api/billing/webhook` | Stripe signature | Stripe only (legacy alias `/api/payment/webhook`) |
-| GET | `/api/health` | none | 200 `{status: "ok", database: "up"}` or 503 when the database is down |
+| GET | `/api/health` | none | 200 `{status:"ok", database:"up"}`; 503 when the database is down |
 
-Data routes (`/api/dashboard`, `/api/assessments`, `/api/reports/rie`, `/api/risks`, `/api/actions`) answer
-402 `subscription_required` for organizations without a paid subscription.
-
-## Product and price
-
-One product: RI&E Compliance Dashboard, yearly subscription per organization. The Stripe Price is set by
-`STRIPE_PRICE_ID` in the dashboard environment; the website should show the price shown on that Stripe
-Price (the code no longer hard-codes €499). Promotion codes are accepted at checkout.
-
-## Configuration the website needs
-
-Only the dashboard base URL. Use one variable on the website, for example
-`NEXT_PUBLIC_DASHBOARD_URL=https://<dashboard host>`, and build the three links from it. Until the
-staging deployment exists, there is no verified staging host to put there.
-
-### Mapping to the website's config (Haldrecht/haldrecht PR #3, `RieConfig`)
-
-| Website key | Value | Status |
-| --- | --- | --- |
-| `appUrl` | `https://<dashboard host>` (https only, as the website requires) | **No verified host yet**: production serves an older build; no staging deployment exists. Leave empty until one is approved. |
-| `startPad` | `/register` | Verified on this branch |
-| `loginPad` | `/login` | Verified on this branch |
-| (not in RieConfig yet) | `/billing` | Verified on this branch. Optional "Abonnement beheren" link for returning customers. |
+Customer data routes (`/api/dashboard`, `/api/assessments`, `/api/reports/rie`, `/api/risks`, `/api/actions`)
+answer 402 `subscription_required` for organizations without a paid subscription.

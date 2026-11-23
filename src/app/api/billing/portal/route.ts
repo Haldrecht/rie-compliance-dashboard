@@ -21,6 +21,8 @@ export async function POST(request: NextRequest) {
       customer: company.stripeCustomerId,
       return_url: `${config.appUrl}/billing`,
       locale: 'nl',
+      // Created by scripts/stripe-sandbox-setup.mjs; without it Stripe uses the account's default portal.
+      ...(process.env.STRIPE_PORTAL_CONFIGURATION_ID ? { configuration: process.env.STRIPE_PORTAL_CONFIGURATION_ID } : {}),
     });
     return NextResponse.json({ url: session.url });
   } catch (error) {

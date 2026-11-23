@@ -40,7 +40,14 @@ function parseForm(body) {
   return out;
 }
 
+// Test control: when true, webhooks are not delivered (simulates a lost or long-delayed webhook).
+let dropWebhooks = false;
+
 async function deliver(type, object, created = now()) {
+  if (dropWebhooks) {
+    db.events.push({ id: 'dropped', type, deliveries: [] });
+    return [];
+  }
   const event = { id: id('evt'), object: 'event', type, created, api_version: '2025-10-29.clover', livemode: false, data: { object } };
   db.events.push({ id: event.id, type });
   const payload = JSON.stringify(event);
@@ -112,6 +119,11 @@ const server = http.createServer(async (req, res) => {
       const s = db.sessions.get(r[1]);
       return s ? json(res, 200, s) : notFound(res, 'checkout.session');
     }
+    if (req.method === 'GET' && p === '/v1/subscriptions') {
+      const customer = url.searchParams.get('customer');
+      const data = [...db.subscriptions.values()].filter((s) => s.customer === customer);
+      return json(res, 200, { object: 'list', data, has_more: false, url: '/v1/subscriptions' });
+    }
     if (req.method === 'GET' && (r = m(/^\/v1\/subscriptions\/([^/]+)$/))) {
       const s = db.subscriptions.get(r[1]);
       return s ? json(res, 200, s) : notFound(res, 'subscription');
@@ -155,7 +167,7 @@ const server = http.createServer(async (req, res) => {
       }
       const t = now();
       const sub = {
-        id: id('sub'), object: 'subscription', customer: s.customer, status: 'active', cancel_at_period_end: false,
+        id: id('sub'), object: 'subscription', customer: s.customer, status: 'active', created: now(), cancel_at_period_end: false,
         metadata: s.params.subscription_data?.metadata ?? {},
         items: { object: 'list', data: [{ id: id('si'), price: { id: s.params.line_items[0].price }, current_period_end: t + 365 * 86400 }] },
       };
@@ -191,6 +203,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { subscription: sub.id, status: sub.status, deliveries: results });
     }
     if (req.method === 'GET' && p === '/__test/events') return json(res, 200, db.events);
+    if (req.method === 'POST' && p === '/__test/drop-webhooks') {
+      dropWebhooks = JSON.parse(body || '{}').drop === true;
+      return json(res, 200, { dropWebhooks });
+    }
     if (req.method === 'GET' && p === '/__test/health') return json(res, 200, { ok: true });
     return notFound(res, p);
   } catch (error) {

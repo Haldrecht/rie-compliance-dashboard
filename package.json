@@ -15,7 +15,9 @@
     "db:migrate:pg": "prisma migrate deploy --schema prisma/schema.postgres.prisma",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "verify:sandbox": "node scripts/verify-sandbox-purchase.mjs"
+    "verify:sandbox": "node scripts/verify-sandbox-purchase.mjs",
+    "sandbox:setup": "node scripts/stripe-sandbox-setup.mjs",
+    "staging:preflight": "node scripts/staging-preflight.mjs"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",

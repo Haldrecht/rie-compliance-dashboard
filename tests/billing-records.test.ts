@@ -146,3 +146,48 @@ describe('health', () => {
     expect(body).toMatchObject({ status: 'ok', database: 'up' });
   });
 });
+
+describe('paid-but-no-access recovery', () => {
+  it('grants access from /billing status when the webhook was lost and the customer never returned', async () => {
+    const c = await signedUp('lost@recovery.test');
+    const { sessionId } = await (await checkout(req('POST', '/api/billing/checkout', { token: c.token }))).json();
+    stripe.completeCheckout(sessionId); // paid at Stripe; no webhook delivered, no return to the success page
+    const { GET: status } = await import('@/app/api/billing/status/route');
+    const body = await (await status(req('GET', '/api/billing/status', { token: c.token }))).json();
+    expect(body).toMatchObject({ entitled: true, reconcile: 'customer:applied' });
+    expect(stripe.calls).toContain('subscriptions.list');
+  });
+
+  it('refuses a second purchase when Stripe already has an active subscription for the organization', async () => {
+    const c = await signedUp('twice@recovery.test');
+    const first = await (await checkout(req('POST', '/api/billing/checkout', { token: c.token }))).json();
+    stripe.completeCheckout(first.sessionId); // webhook lost
+    const sessionsBefore = stripe.sessions.size;
+    const again = await checkout(req('POST', '/api/billing/checkout', { token: c.token }));
+    expect(again.status).toBe(409);
+    expect((await again.json()).code).toBe('already_subscribed');
+    expect(stripe.sessions.size).toBe(sessionsBefore); // no new checkout session created
+    expect((await prisma.subscription.findFirstOrThrow({ where: { companyId: c.companyId } })).status).toBe('ACTIVE');
+  });
+
+  it('allows a new purchase after cancellation (re-purchase is not blocked by the old subscription)', async () => {
+    const a = await paid('again@recovery.test');
+    stripe.setSubscription(a.sub.id, { status: 'canceled' });
+    await send('customer.subscription.deleted', { id: a.sub.id });
+    const res = await checkout(req('POST', '/api/billing/checkout', { token: a.token }));
+    expect(res.status).toBe(200);
+  });
+
+  it('does not reach other organizations: recovery only lists the caller\'s own Stripe customer', async () => {
+    const a = await paid('owner@recovery.test');
+    const b = await signedUp('other@recovery.test');
+    stripe.calls.length = 0;
+    const { GET: status } = await import('@/app/api/billing/status/route');
+    const body = await (await status(req('GET', '/api/billing/status', { token: b.token }))).json();
+    expect(body.entitled).toBe(false);
+    // b has no Stripe customer yet, so nothing is listed at all.
+    expect(stripe.calls).not.toContain('subscriptions.list');
+    expect(await prisma.subscription.count({ where: { companyId: b.companyId } })).toBe(0);
+    expect(await prisma.subscription.count({ where: { companyId: a.companyId } })).toBe(1);
+  });
+});
