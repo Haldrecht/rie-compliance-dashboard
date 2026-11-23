@@ -42,6 +42,8 @@ function parseForm(body) {
 
 // Test control: when true, webhooks are not delivered (simulates a lost or long-delayed webhook).
 let dropWebhooks = false;
+// Test control: when true, the customer is not sent back to the app after paying (tab closed).
+let noReturn = false;
 
 async function deliver(type, object, created = now()) {
   if (dropWebhooks) {
@@ -178,6 +180,7 @@ const server = http.createServer(async (req, res) => {
       await deliver('invoice.paid', inv);
       await deliver('checkout.session.completed', s);
       await deliver('customer.subscription.created', { ...sub, status: 'incomplete' }, t - 60);
+      if (noReturn) return html(res, 200, '<p>Betaling voltooid.</p>');
       res.writeHead(303, { location: s.params.success_url.replace('{CHECKOUT_SESSION_ID}', s.id) });
       return res.end();
     }
@@ -204,8 +207,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && p === '/__test/events') return json(res, 200, db.events);
     if (req.method === 'POST' && p === '/__test/drop-webhooks') {
-      dropWebhooks = JSON.parse(body || '{}').drop === true;
-      return json(res, 200, { dropWebhooks });
+      const params = JSON.parse(body || '{}');
+      dropWebhooks = params.drop === true;
+      noReturn = params.noReturn === true;
+      return json(res, 200, { dropWebhooks, noReturn });
     }
     if (req.method === 'GET' && p === '/__test/health') return json(res, 200, { ok: true });
     return notFound(res, p);

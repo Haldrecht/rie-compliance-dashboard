@@ -306,15 +306,12 @@ test('paid but webhook lost and tab closed: access is recovered, no second purch
   await page.getByRole('button', { name: 'Doorgaan naar betalen' }).click();
   await page.waitForURL(`${STANDIN}/pay/**`);
 
-  await standin('/__test/drop-webhooks', { drop: true });
+  // Webhooks are lost and the customer never returns to the app after paying (tab closed).
+  await standin('/__test/drop-webhooks', { drop: true, noReturn: true });
   try {
-    // The browser never reaches the success page (closed tab / lost connection).
-    await page.route('**/payment/success**', (route) => route.abort());
     await page.getByLabel('Kaartnummer').fill('4242 4242 4242 4242');
-    await page.getByRole('button', { name: 'Betalen' }).click().catch(() => {});
-    // Wait until the stand-in has completed the payment (its webhooks were dropped), then close the tab
-    // while the success page is still blocked, so nothing reconciles from the browser.
-    await expect.poll(async () => ((await standin('/__test/events')) as Array<{ id: string }>).filter((e) => e.id === 'dropped').length).toBeGreaterThanOrEqual(3);
+    await page.getByRole('button', { name: 'Betalen' }).click();
+    await expect(page.getByText('Betaling voltooid.')).toBeVisible();
     await page.close();
     const company = (await q<{ id: string }>('select id from companies where name = $1', [`Verloren Webhook ${run} BV`]))[0];
     expect(await q('select 1 from subscriptions where "companyId" = $1', [company.id])).toHaveLength(0);
@@ -334,7 +331,7 @@ test('paid but webhook lost and tab closed: access is recovered, no second purch
     await page.getByRole('button', { name: 'Naar het dashboard' }).click();
     await page.waitForURL(/\/(dashboard|rie\/new)$/);
   } finally {
-    await standin('/__test/drop-webhooks', { drop: false });
+    await standin('/__test/drop-webhooks', { drop: false, noReturn: false });
   }
 });
 
