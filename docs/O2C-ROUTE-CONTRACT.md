@@ -70,3 +70,12 @@ Price (the code no longer hard-codes €499). Promotion codes are accepted at ch
 Only the dashboard base URL. Use one variable on the website, for example
 `NEXT_PUBLIC_DASHBOARD_URL=https://<dashboard host>`, and build the three links from it. Until the
 staging deployment exists, there is no verified staging host to put there.
+
+### Mapping to the website's config (Haldrecht/haldrecht PR #3, `RieConfig`)
+
+| Website key | Value | Status |
+| --- | --- | --- |
+| `appUrl` | `https://<dashboard host>` (https only, as the website requires) | **No verified host yet**: production serves an older build; no staging deployment exists. Leave empty until one is approved. |
+| `startPad` | `/register` | Verified on this branch |
+| `loginPad` | `/login` | Verified on this branch |
+| (not in RieConfig yet) | `/billing` | Verified on this branch. Optional "Abonnement beheren" link for returning customers. |
