@@ -64,7 +64,8 @@ export async function requireCustomer(request: NextRequest, options: { requireEn
   };
 }
 
-type RouteContext = { params?: Promise<Record<string, string>> | Record<string, string> };
+// Matches Next.js 15's route handler contract: the second argument is always `{ params: Promise<...> }`.
+type RouteContext = { params: Promise<Record<string, string>> };
 
 /**
  * Wrap a route handler with the tenant guard. The handler receives the customer context (whose
@@ -73,7 +74,7 @@ type RouteContext = { params?: Promise<Record<string, string>> | Record<string, 
 export function withCustomer<P extends Record<string, string> = Record<string, string>>(
   handler: (request: NextRequest, customer: CustomerContext, context: { params: P }) => Promise<Response>,
 ) {
-  return async (request: NextRequest, context?: RouteContext): Promise<Response> => {
+  return async (request: NextRequest, context: RouteContext): Promise<Response> => {
     const guard = await requireCustomer(request);
     if (!guard.ok) return guard.response;
     const params = ((await context?.params) ?? {}) as P;

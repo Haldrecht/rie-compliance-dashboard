@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
   }
 
   const loaded = await loadEntitlement(ctx.userId);
+  const company = await prisma.company.findUnique({ where: { id: ctx.companyId }, select: { stripeCustomerId: true } });
   const subscription = loaded?.subscription ?? null;
   return NextResponse.json({
     entitled: loaded?.entitlement.entitled ?? false,
@@ -37,6 +38,7 @@ export async function GET(request: NextRequest) {
       currentPeriodEnd: subscription.currentPeriodEnd,
       cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
     },
+    canManageBilling: !!company?.stripeCustomerId,
     ...(reconcile ? { reconcile } : {}),
   });
 }

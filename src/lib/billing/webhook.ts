@@ -2,6 +2,7 @@ import type Stripe from 'stripe';
 import type { PrismaClient } from '@prisma/client';
 import { applySubscription, type SyncOutcome } from './sync';
 import type { StripeGateway } from './stripe';
+import { applyInvoice, invoiceSubscriptionId } from './invoices';
 
 // Stripe webhook processing.
 //
@@ -25,17 +26,18 @@ const SUBSCRIPTION_EVENTS = new Set([
   'customer.subscription.resumed',
 ]);
 
+const INVOICE_EVENTS = new Set([
+  'invoice.finalized',
+  'invoice.paid',
+  'invoice.payment_failed',
+  'invoice.payment_action_required',
+  'invoice.voided',
+  'invoice.marked_uncollectible',
+]);
+
 function idOf(value: string | { id: string } | null | undefined): string | null {
   if (!value) return null;
   return typeof value === 'string' ? value : value.id;
-}
-
-/** Subscription id on an invoice: `invoice.subscription` (older APIs) or `parent.subscription_details` (2025+). */
-function invoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
-  const legacy = idOf((invoice as unknown as { subscription?: string | { id: string } | null }).subscription);
-  if (legacy) return legacy;
-  const parent = (invoice as unknown as { parent?: { subscription_details?: { subscription?: string | { id: string } } } }).parent;
-  return idOf(parent?.subscription_details?.subscription ?? null);
 }
 
 async function syncById(prisma: PrismaClient, stripe: StripeGateway, subscriptionId: string, now: () => number): Promise<SyncOutcome> {
@@ -79,13 +81,19 @@ export async function processStripeEvent(
     const sub = event.data.object as Stripe.Subscription;
     const outcome = await syncById(prisma, stripe, sub.id, now);
     result = outcome === 'unmatched' ? { status: 'ignored', detail: 'unknown organization' } : { status: 'processed', detail: outcome };
-  } else if (event.type === 'invoice.paid' || event.type === 'invoice.payment_failed' || event.type === 'invoice.payment_action_required') {
-    const subscriptionId = invoiceSubscriptionId(event.data.object as Stripe.Invoice);
-    if (!subscriptionId) {
-      result = { status: 'ignored', detail: 'invoice without subscription' };
+  } else if (INVOICE_EVENTS.has(event.type)) {
+    const hinted = event.data.object as Stripe.Invoice;
+    if (!hinted.id) {
+      result = { status: 'ignored', detail: 'invoice without id' };
     } else {
-      const outcome = await syncById(prisma, stripe, subscriptionId, now);
-      result = outcome === 'unmatched' ? { status: 'ignored', detail: 'unknown organization' } : { status: 'processed', detail: outcome };
+      // Subscription first, so a first invoice can be matched through the subscription's organization.
+      const invoice = (await stripe.invoices.retrieve(hinted.id)) as Stripe.Invoice;
+      const subscriptionId = invoiceSubscriptionId(invoice);
+      const subOutcome = subscriptionId ? await syncById(prisma, stripe, subscriptionId, now) : null;
+      const invoiceOutcome = await applyInvoice(prisma, invoice, now());
+      result = invoiceOutcome === 'unmatched' && subOutcome !== 'applied'
+        ? { status: 'ignored', detail: 'unknown organization' }
+        : { status: 'processed', detail: `invoice ${invoiceOutcome}${subOutcome ? `, subscription ${subOutcome}` : ''}` };
     }
   } else {
     result = { status: 'ignored', detail: 'event type not handled' };

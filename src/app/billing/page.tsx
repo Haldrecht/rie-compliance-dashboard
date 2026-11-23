@@ -7,7 +7,9 @@ import { authenticatedFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
-type Status = { entitled: boolean; reason: string; subscription: { status: string; currentPeriodEnd: string | null; cancelAtPeriodEnd: boolean } | null };
+type Invoice = { id: string; number: string | null; status: string; currency: string; total: number; amountDue: number; hostedInvoiceUrl: string | null; invoicePdf: string | null; issuedAt: string | null };
+
+type Status = { entitled: boolean; reason: string; canManageBilling?: boolean; subscription: { status: string; currentPeriodEnd: string | null; cancelAtPeriodEnd: boolean } | null };
 
 const REASON_TEXT: Record<string, string> = {
   no_subscription: 'Uw organisatie heeft nog geen abonnement.',
@@ -16,6 +18,12 @@ const REASON_TEXT: Record<string, string> = {
   canceled: 'Het abonnement van uw organisatie is beëindigd.',
   paused: 'Het abonnement van uw organisatie is gepauzeerd.',
 };
+
+const INVOICE_STATUS: Record<string, string> = { paid: 'Betaald', open: 'Openstaand', uncollectible: 'Oninbaar', void: 'Vervallen' };
+
+function formatMoney(cents: number, currency: string) {
+  return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);
+}
 
 // Checkout for a signed-in organization without (or with a lapsed) subscription.
 export default function BillingPage() {
@@ -26,6 +34,25 @@ export default function BillingPage() {
   const [starting, setStarting] = useState(false);
   const [canceled, setCanceled] = useState(false);
   const autoStarted = useRef(false);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [opening, setOpening] = useState(false);
+
+  const openPortal = async () => {
+    setError('');
+    setOpening(true);
+    try {
+      const res = await authenticatedFetch('/api/billing/portal', { method: 'POST' }, token);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.url) {
+        window.location.href = data.url;
+        return;
+      }
+      setError(data.error || 'Abonnementsbeheer kon niet worden geopend');
+    } catch {
+      setError('Abonnementsbeheer kon niet worden geopend');
+    }
+    setOpening(false);
+  };
 
   const startCheckout = useCallback(async () => {
     setError('');
@@ -67,6 +94,10 @@ export default function BillingPage() {
         }
       })
       .catch(() => setError('Status kon niet worden opgehaald'));
+    authenticatedFetch('/api/billing/invoices', {}, token)
+      .then((r) => (r.ok ? r.json() : { invoices: [] }))
+      .then((d) => setInvoices(d.invoices ?? []))
+      .catch(() => setInvoices([]));
   }, [authLoading, isAuthenticated, token, router, startCheckout]);
 
   return (
@@ -101,6 +132,34 @@ export default function BillingPage() {
               </Button>
               <button type="button" onClick={logout} className="w-full text-sm text-gray-500 hover:underline">Uitloggen</button>
             </>
+          )}
+          {status?.canManageBilling && (
+            <Button variant="outline" className="w-full" onClick={openPortal} disabled={opening}>
+              {opening ? 'Openen...' : 'Betaalgegevens, facturen en opzeggen'}
+            </Button>
+          )}
+          {invoices.length > 0 && (
+            <div className="pt-2">
+              <h2 className="text-sm font-semibold text-gray-900 mb-2">Facturen</h2>
+              <ul className="divide-y divide-gray-200 text-sm" aria-label="Facturen">
+                {invoices.map((inv) => (
+                  <li key={inv.id} className="py-2 flex items-center justify-between gap-2">
+                    <span>
+                      {inv.number ?? 'Concept'} · {inv.issuedAt ? new Date(inv.issuedAt).toLocaleDateString('nl-NL') : ''}
+                    </span>
+                    <span className="flex items-center gap-3">
+                      <span>{formatMoney(inv.total, inv.currency)}</span>
+                      <span className={inv.status === 'paid' ? 'text-green-700' : 'text-yellow-700'}>{INVOICE_STATUS[inv.status] ?? inv.status}</span>
+                      {(inv.invoicePdf || inv.hostedInvoiceUrl) && (
+                        <a className="text-brand-gold hover:underline" href={inv.invoicePdf ?? inv.hostedInvoiceUrl ?? '#'} target="_blank" rel="noopener noreferrer">
+                          {inv.invoicePdf ? 'PDF' : 'Bekijken'}
+                        </a>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </CardContent>
       </Card>

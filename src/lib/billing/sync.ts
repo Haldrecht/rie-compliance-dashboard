@@ -57,24 +57,38 @@ export async function applySubscription(
     cancelAtPeriodEnd: !!sub.cancel_at_period_end,
     syncedAt: version,
   };
-  return prisma.$transaction(async (tx) => {
-    const current = await tx.subscription.findUnique({ where: { companyId } });
-    if (current && current.syncedAt > version) return 'stale' as const;
-    // A late event about an old, ended subscription must not displace the organization's live one.
-    const liveStatuses = ['ACTIVE', 'TRIALING', 'PAST_DUE'];
-    const terminal = ['CANCELED', 'INCOMPLETE_EXPIRED', 'INCOMPLETE'].includes(data.status);
-    if (current && current.stripeSubscriptionId !== sub.id && liveStatuses.includes(current.status) && terminal) {
-      return 'stale' as const;
+
+  // Lock-free and safe under concurrent delivery: every write is a single conditional statement,
+  // so there is no read-then-write window.
+  //  - not older than what is stored (out-of-order snapshots are dropped);
+  //  - an ended subscription never displaces a different, live one (late events after a re-purchase).
+  const terminal = ['CANCELED', 'INCOMPLETE_EXPIRED', 'INCOMPLETE'].includes(data.status);
+  const guard = {
+    companyId,
+    syncedAt: { lte: version },
+    ...(terminal ? { OR: [{ stripeSubscriptionId: sub.id }, { status: { notIn: ['ACTIVE', 'TRIALING', 'PAST_DUE'] as const } }] } : {}),
+  };
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const updated = await prisma.subscription.updateMany({ where: guard as never, data });
+    if (updated.count === 1) return linkCustomer(prisma, companyId, customerId);
+    const exists = await prisma.subscription.count({ where: { companyId } });
+    if (exists) return 'stale';
+    try {
+      await prisma.subscription.create({ data: { companyId, ...data } });
+      return linkCustomer(prisma, companyId, customerId);
+    } catch (error) {
+      // Unique violation: another delivery created the row (or this subscription id is held by a row
+      // being replaced) between our statements. Re-evaluate against the row that won.
+      if ((error as { code?: string }).code !== 'P2002') throw error;
     }
-    // Otherwise a newer subscription replacing a canceled one (re-purchase) takes over the organization's row.
-    if (current) {
-      await tx.subscription.update({ where: { companyId }, data });
-    } else {
-      await tx.subscription.create({ data: { companyId, ...data } });
-    }
-    if (customerId) {
-      await tx.company.updateMany({ where: { id: companyId, stripeCustomerId: null }, data: { stripeCustomerId: customerId } });
-    }
-    return 'applied' as const;
-  });
+  }
+  throw new Error(`Could not apply subscription ${sub.id} after concurrent updates`);
+}
+
+async function linkCustomer(prisma: PrismaClient, companyId: string, customerId: string): Promise<SyncOutcome> {
+  if (customerId) {
+    await prisma.company.updateMany({ where: { id: companyId, stripeCustomerId: null }, data: { stripeCustomerId: customerId } });
+  }
+  return 'applied';
 }

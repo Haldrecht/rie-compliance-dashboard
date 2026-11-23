@@ -24,6 +24,7 @@ export default function RisksPage() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingRisk, setEditingRisk] = useState<Risk | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
 
@@ -31,78 +32,34 @@ export default function RisksPage() {
     fetchRisks();
   }, []);
 
+  // All data comes from the organization's database records; nothing is simulated.
+  const api = async (url: string, init: RequestInit = {}) => {
+    const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
+    const res = await fetch(url, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    if (res.status === 401) {
+      window.location.href = '/login';
+      throw new Error('Niet ingelogd');
+    }
+    if (res.status === 402) {
+      window.location.href = '/billing';
+      throw new Error('Abonnement vereist');
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Er ging iets mis');
+    return data;
+  };
+
   const fetchRisks = async () => {
     try {
       setLoading(true);
-      // In a real app, this would be an API call
-      // Create fresh Date objects each time to avoid serialization issues
-      const mockRisks: Risk[] = [
-        {
-          id: '1',
-          assessmentId: 'assessment-1',
-          companyId: 'company-1',
-          category: 'PHYSICAL_WORKSPACE',
-          title: 'Oncomfortabele werkplek',
-          description: 'Werkplekken met onvoldoende ergonomische aanpassingen',
-          location: 'Kantoor verdieping 2',
-          department: 'Administratie',
-          probability: 4,
-          impact: 4,
-          riskLevel: 'HIGH',
-          exposedEmployees: 8,
-          currentMeasures: ['Basis ergonomische stoelen'],
-          proposedMeasures: ['Aanpassen werkplekken', 'Ergonomische training'],
-          status: 'active',
-          createdDate: new Date('2024-01-15'),
-          reviewDate: new Date('2024-07-15'),
-          attachments: [],
-        },
-        {
-          id: '2',
-          assessmentId: 'assessment-1',
-          companyId: 'company-1',
-          category: 'SAFETY_RISKS',
-          title: 'Brandveiligheid',
-          description: 'Onvoldoende brandveiligheidsmaatregelen',
-          location: 'Hele gebouw',
-          department: 'Algemeen',
-          probability: 2,
-          impact: 5,
-          riskLevel: 'HIGH',
-          exposedEmployees: 25,
-          currentMeasures: ['Brandblussers aanwezig'],
-          proposedMeasures: ['Brandveiligheidstraining', 'Nooduitgangen controleren'],
-          status: 'active',
-          createdDate: new Date('2024-01-10'),
-          reviewDate: new Date('2024-07-10'),
-          attachments: [],
-        },
-        {
-          id: '3',
-          assessmentId: 'assessment-1',
-          companyId: 'company-1',
-          category: 'PSYCHOSOCIAL',
-          title: 'Werkdruk',
-          description: 'Hoge werkdruk bij bepaalde afdelingen',
-          location: 'Productie afdeling',
-          department: 'Productie',
-          probability: 3,
-          impact: 3,
-          riskLevel: 'MEDIUM',
-          exposedEmployees: 12,
-          currentMeasures: ['Flexibele werktijden'],
-          proposedMeasures: ['Werkdruk analyse', 'Extra personeel'],
-          status: 'active',
-          createdDate: new Date('2024-01-20'),
-          reviewDate: new Date('2024-07-20'),
-          attachments: [],
-        },
-      ];
-      
-      await new Promise(resolve => setTimeout(resolve, 500));
-      setRisks(mockRisks);
+      setLoadError(null);
+      const data = await api('/api/risks?limit=100');
+      setRisks(data.risks);
     } catch (error) {
-      console.error('Error fetching risks:', error);
+      setLoadError(error instanceof Error ? error.message : 'Risico\'s konden niet worden geladen');
     } finally {
       setLoading(false);
     }
@@ -119,39 +76,35 @@ export default function RisksPage() {
   };
 
   const handleDeleteRisk = async (riskId: string) => {
-    if (confirm('Weet je zeker dat je dit risico wilt verwijderen?')) {
+    if (!confirm('Weet je zeker dat je dit risico wilt verwijderen?')) return;
+    try {
+      await api(`/api/risks/${riskId}`, { method: 'DELETE' });
       setRisks(risks.filter(risk => risk.id !== riskId));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Verwijderen mislukt');
     }
   };
 
   const handleFormSubmit = async (data: any) => {
     try {
       if (editingRisk) {
-        // Update existing risk
-        setRisks(risks.map(risk => 
-          risk.id === editingRisk.id 
-            ? { ...risk, ...data, updatedAt: new Date() }
-            : risk
-        ));
+        const updated = await api(`/api/risks/${editingRisk.id}`, { method: 'PUT', body: JSON.stringify(data) });
+        setRisks(risks.map(risk => (risk.id === editingRisk.id ? updated : risk)));
       } else {
-        // Add new risk
-        const newRisk: Risk = {
-          id: Date.now().toString(),
-          assessmentId: 'assessment-1',
-          companyId: 'company-1',
-          ...data,
-          riskLevel: data.riskLevel || 'LOW',
-          status: 'active',
-          createdDate: new Date(),
-          reviewDate: new Date(Date.now() + 6 * 30 * 24 * 60 * 60 * 1000), // 6 months from now
-          attachments: [],
-        };
-        setRisks([newRisk, ...risks]);
+        // New risks belong to the organization's most recent RI&E.
+        const { assessments } = await api('/api/assessments');
+        if (!assessments?.length) {
+          alert('Stel eerst een RI&E op voordat u losse risico\'s toevoegt.');
+          window.location.href = '/rie/new';
+          return;
+        }
+        const created = await api('/api/risks', { method: 'POST', body: JSON.stringify({ ...data, assessmentId: assessments[0].id }) });
+        setRisks([created, ...risks]);
       }
       setShowForm(false);
       setEditingRisk(null);
     } catch (error) {
-      console.error('Error saving risk:', error);
+      alert(error instanceof Error ? error.message : 'Opslaan mislukt');
     }
   };
 
@@ -196,7 +149,7 @@ export default function RisksPage() {
           <main className="py-6">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <RiskForm
-                risk={editingRisk}
+                risk={editingRisk ?? undefined}
                 onSubmit={handleFormSubmit}
                 onCancel={handleFormCancel}
               />
@@ -220,6 +173,12 @@ export default function RisksPage() {
                 Beheer en beoordeel werkplekrisico's
               </p>
             </div>
+
+            {loadError && (
+              <div role="alert" className="mb-6 p-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md">
+                {loadError} <button type="button" className="underline ml-2" onClick={fetchRisks}>Opnieuw proberen</button>
+              </div>
+            )}
 
             {/* Filters and Actions */}
             <div className="mb-6 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">

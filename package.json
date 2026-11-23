@@ -13,7 +13,9 @@
     "seed:risks": "node prisma/seed-risks.js",
     "db:generate:pg": "prisma generate --schema prisma/schema.postgres.prisma",
     "db:migrate:pg": "prisma migrate deploy --schema prisma/schema.postgres.prisma",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "verify:sandbox": "node scripts/verify-sandbox-purchase.mjs"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",
@@ -35,9 +37,9 @@
     "framer-motion": "^12.23.24",
     "html2canvas": "^1.4.1",
     "jsonwebtoken": "^9.0.2",
-    "jspdf": "^3.0.3",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.544.0",
-    "next": "15.5.4",
+    "next": "15.5.29",
     "postcss": "^8.5.6",
     "prisma": "^6.16.3",
     "react": "19.1.0",
@@ -52,11 +54,13 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.56.1",
     "@types/node": "^20",
+    "@types/pg": "^8.15.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "15.5.4",
+    "eslint-config-next": "15.5.29",
     "pg": "^8.16.3",
     "typescript": "^5",
     "vitest": "^3.2.4"

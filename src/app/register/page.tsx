@@ -26,9 +26,11 @@ export default function RegisterPage() {
       .catch(() => setEnabled(false));
   }, []);
 
+  // Already signed in when arriving here: go to billing. Not while submitting, because a successful
+  // registration signs in and navigates to /billing?start=1 itself (which starts checkout).
   useEffect(() => {
-    if (!authLoading && isAuthenticated) router.push('/billing');
-  }, [isAuthenticated, authLoading, router]);
+    if (!authLoading && isAuthenticated && !submitting) router.push('/billing');
+  }, [isAuthenticated, authLoading, router, submitting]);
 
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [key]: e.target.value });
 

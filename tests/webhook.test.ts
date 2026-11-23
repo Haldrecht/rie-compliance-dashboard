@@ -158,18 +158,20 @@ describe('failed payments, renewals and cancellation', () => {
     // Renewal fails; the paid period just ended. Stripe marks it past_due and retries the card.
     const justEnded = Math.floor(Date.now() / 1000) - 3600;
     stripe.setSubscription(sub.id, { status: 'past_due', periodEnd: justEnded });
-    await deliver('invoice.payment_failed', { id: 'in_1', parent: { subscription_details: { subscription: sub.id } } });
+    await deliver('invoice.payment_failed', stripe.invoice(sub.id, { id: 'in_1', status: 'open', amount_paid: 0, status_transitions: { finalized_at: justEnded, paid_at: null } }));
     const inGrace = await (await billingStatus(req('GET', '/api/billing/status', { token }))).json();
     expect(inGrace).toMatchObject({ entitled: true, reason: 'subscription_past_due_grace' });
 
     // Retries keep failing past the grace window (period ended 8 days ago).
     stripe.setSubscription(sub.id, { status: 'past_due', periodEnd: Math.floor(Date.now() / 1000) - 8 * 86400 });
-    await deliver('invoice.payment_failed', { id: 'in_2', subscription: sub.id });
+    await deliver('invoice.payment_failed', stripe.invoice(sub.id, { id: 'in_1' }));
     expect(await access(token)).toBe(402);
 
     // The card is updated and the retry succeeds: access returns.
     stripe.setSubscription(sub.id, { status: 'active', periodEnd: Math.floor(Date.now() / 1000) + 365 * 86400 });
-    await deliver('invoice.paid', { id: 'in_3', subscription: sub.id });
+    await deliver('invoice.paid', stripe.invoice(sub.id, { id: 'in_1', status: 'paid', amount_paid: 60379, status_transitions: { finalized_at: justEnded, paid_at: Math.floor(Date.now() / 1000) } }));
+    const paidInvoice = await prisma.invoice.findUniqueOrThrow({ where: { stripeInvoiceId: 'in_1' } });
+    expect(paidInvoice).toMatchObject({ status: 'paid', amountPaid: 60379 });
     expect(await access(token)).toBe(200);
   });
 

@@ -37,6 +37,8 @@ export interface StripeGateway {
   customers: { create: Stripe['customers']['create'] };
   checkout: { sessions: { create: Stripe['checkout']['sessions']['create']; retrieve: Stripe['checkout']['sessions']['retrieve'] } };
   subscriptions: { retrieve: Stripe['subscriptions']['retrieve'] };
+  invoices: { retrieve: Stripe['invoices']['retrieve'] };
+  billingPortal: { sessions: { create: Stripe['billingPortal']['sessions']['create'] } };
   webhooks: { constructEvent: Stripe['webhooks']['constructEvent'] };
 }
 
@@ -50,7 +52,24 @@ export function setStripeGatewayForTests(gateway: StripeGateway | null) {
 export function stripeGateway(secretKey: string): StripeGateway {
   if (override) return override;
   if (!cached || cached.key !== secretKey) {
-    cached = { key: secretKey, client: new Stripe(secretKey, { maxNetworkRetries: 2 }) };
+    cached = { key: secretKey, client: new Stripe(secretKey, { maxNetworkRetries: 2, ...apiHostOverride(secretKey) }) };
   }
   return cached.client;
 }
+
+/**
+ * STRIPE_API_BASE (e.g. http://127.0.0.1:12111) points the SDK at a local Stripe stand-in for
+ * browser acceptance tests. It is honored only with test-mode keys, so it can never redirect live
+ * billing traffic.
+ */
+function apiHostOverride(secretKey: string): Partial<Stripe.StripeConfig> {
+  const base = process.env.STRIPE_API_BASE;
+  if (!base || !(secretKey.startsWith('sk_test_') || secretKey.startsWith('rk_test_'))) return {};
+  const url = new URL(base);
+  return {
+    host: url.hostname,
+    port: url.port ? Number(url.port) : undefined,
+    protocol: url.protocol.replace(':', '') as 'http' | 'https',
+  };
+}
+

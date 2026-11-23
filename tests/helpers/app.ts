@@ -20,6 +20,7 @@ export function req(method: string, path: string, opts: { token?: string; body?:
 export async function resetDb() {
   // Children before parents.
   await prisma.stripeEvent.deleteMany();
+  await prisma.invoice.deleteMany();
   await prisma.subscription.deleteMany();
   await prisma.riskComment.deleteMany();
   await prisma.countermeasure.deleteMany();

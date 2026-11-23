@@ -21,6 +21,7 @@ export class FakeStripe {
   customers = new Map<string, { id: string; metadata: Record<string, string> }>();
   sessions = new Map<string, Record<string, any>>();
   subscriptions = new Map<string, Sub>();
+  invoices = new Map<string, Record<string, any>>();
   idempotency = new Map<string, string>();
   calls: string[] = [];
   private n = 0;
@@ -78,6 +79,22 @@ export class FakeStripe {
           return structuredClone(s);
         }) as any,
       },
+      invoices: {
+        retrieve: (async (id: string) => {
+          self.calls.push('invoices.retrieve');
+          const inv = self.invoices.get(id);
+          if (!inv) throw new Error(`No such invoice: ${id}`);
+          return structuredClone(inv);
+        }) as any,
+      },
+      billingPortal: {
+        sessions: {
+          create: (async (params: any) => {
+            self.calls.push('billingPortal.sessions.create');
+            return { id: self.id('bps'), url: `https://billing.stripe.test/p/session/${params.customer}`, return_url: params.return_url };
+          }) as any,
+        },
+      },
       webhooks: realWebhooks,
     };
   }
@@ -99,6 +116,36 @@ export class FakeStripe {
     session.status = 'complete';
     session.subscription = sub.id;
     return { session, sub };
+  }
+
+  /** Create (or update) an invoice for a subscription, as Stripe does at each billing cycle. */
+  invoice(subId: string, patch: Record<string, any> = {}) {
+    const sub = this.subscriptions.get(subId)!;
+    const id = patch.id ?? this.id('in');
+    const now = Math.floor(Date.now() / 1000);
+    const existing = this.invoices.get(id) ?? {
+      id,
+      object: 'invoice',
+      customer: sub.customer,
+      number: `RIE-${String(this.invoices.size + 1).padStart(4, '0')}`,
+      status: 'paid',
+      currency: 'eur',
+      subtotal: 49900,
+      total_taxes: [{ amount: 10479 }],
+      total: 60379,
+      amount_due: 60379,
+      amount_paid: 60379,
+      hosted_invoice_url: `https://invoice.stripe.test/i/${id}`,
+      invoice_pdf: `https://pay.stripe.test/invoice/${id}/pdf`,
+      period_start: now,
+      period_end: now + 365 * 86400,
+      created: now,
+      status_transitions: { finalized_at: now, paid_at: now },
+      parent: { subscription_details: { subscription: subId } },
+    };
+    Object.assign(existing, patch);
+    this.invoices.set(id, existing);
+    return existing;
   }
 
   setSubscription(id: string, patch: Partial<Sub> & { periodEnd?: number }) {

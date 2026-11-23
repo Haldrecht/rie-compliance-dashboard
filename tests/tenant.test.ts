@@ -9,6 +9,8 @@ import { GET as listActions, POST as createAction } from '@/app/api/actions/rout
 import { GET as dashboard } from '@/app/api/dashboard/route';
 import { installFakeStripe, req, resetDb, wizardPayload } from './helpers/app';
 
+const noParams = { params: Promise.resolve({}) };
+
 // Two paying organizations; each must see only its own data.
 
 async function org(name: string) {
@@ -45,11 +47,11 @@ describe('tenant isolation', () => {
   it('lists only the caller organization\'s assessments, risks and actions', async () => {
     const assessments = (await (await listAssessments(req('GET', '/api/assessments', { token: a.token }))).json()).assessments;
     expect(assessments.map((x: { id: string }) => x.id)).toEqual([a.assessmentId]);
-    const risks = (await (await listRisks(req('GET', '/api/risks', { token: a.token }))).json());
+    const risks = (await (await listRisks(req('GET', '/api/risks', { token: a.token }), noParams)).json());
     const riskIds = JSON.stringify(risks);
     expect(riskIds).toContain(a.riskId);
     expect(riskIds).not.toContain(b.riskId);
-    const actions = await listActions(req('GET', '/api/actions', { token: a.token }));
+    const actions = await listActions(req('GET', '/api/actions', { token: a.token }), noParams);
     expect(actions.status).toBe(200);
   });
 
@@ -67,13 +69,13 @@ describe('tenant isolation', () => {
   });
 
   it('refuses to attach records to another organization\'s assessment, risk or user', async () => {
-    const risk = await createRisk(req('POST', '/api/risks', { token: a.token, body: { assessmentId: b.assessmentId, category: 'PSYCHOSOCIAL', title: 'x', description: 'x', location: 'x', probability: 2, impact: 2 } }));
+    const risk = await createRisk(req('POST', '/api/risks', { token: a.token, body: { assessmentId: b.assessmentId, category: 'PSYCHOSOCIAL', title: 'x', description: 'x', location: 'x', probability: 2, impact: 2 } }), noParams);
     expect(risk.status).toBe(404);
     for (const link of [{ assessmentId: b.assessmentId }, { riskId: b.riskId }, { assignedToId: b.user.id }]) {
-      const action = await createAction(req('POST', '/api/actions', { token: a.token, body: { title: 't', description: 'd', priority: 'HIGH', ...link } }));
+      const action = await createAction(req('POST', '/api/actions', { token: a.token, body: { title: 't', description: 'd', priority: 'HIGH', ...link } }), noParams);
       expect(action.status).toBe(404);
     }
-    const own = await createAction(req('POST', '/api/actions', { token: a.token, body: { title: 't', description: 'd', priority: 'HIGH', riskId: a.riskId, assignedToId: a.user.id } }));
+    const own = await createAction(req('POST', '/api/actions', { token: a.token, body: { title: 't', description: 'd', priority: 'HIGH', riskId: a.riskId, assignedToId: a.user.id } }), noParams);
     expect(own.status).toBe(201);
   });
 
@@ -88,7 +90,7 @@ describe('tenant isolation', () => {
     const loner = await prisma.user.create({ data: { email: 'loner@tenant.test', name: 'Loner', password: 'x', role: 'MANAGER' } });
     await prisma.license.create({ data: { userId: loner.id, plan: 'ADMIN', status: 'ACTIVE' } });
     const token = generateToken({ userId: loner.id, email: loner.email, role: loner.role });
-    const res = await listRisks(req('GET', '/api/risks', { token }));
+    const res = await listRisks(req('GET', '/api/risks', { token }), noParams);
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe('no_organization');
     expect((await report(req('POST', '/api/reports/rie', { token, body: { assessmentId: a.assessmentId, format: 'pdf' } }))).status).toBe(403);

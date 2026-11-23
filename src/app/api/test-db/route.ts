@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
 // Test database connection and schema
+// Local development diagnostics only: it reads user rows, so it must never be reachable on a deployment.
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV !== 'development') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
   try {
     if (!prisma || !process.env.DATABASE_URL) {
       return NextResponse.json({

@@ -107,6 +107,7 @@ model Company {
   risks       Risk[]
   actions     Action[]
   subscription Subscription?
+  invoices     Invoice[]
 
   @@map("companies")
 }
@@ -317,5 +318,35 @@ model StripeEvent {
   processedAt DateTime @default(now())
 
   @@map("stripe_events")
+}
+
+// Stripe invoices for the organization (synced copy; Stripe remains the source of truth).
+// Amounts are in the smallest currency unit (cents).
+model Invoice {
+  id                   String    @id @default(cuid())
+  companyId            String
+  company              Company   @relation(fields: [companyId], references: [id])
+  stripeInvoiceId      String    @unique
+  stripeSubscriptionId String?
+  number               String?
+  status               String    // draft | open | paid | uncollectible | void
+  currency             String
+  subtotal             Int
+  tax                  Int       @default(0)
+  total                Int
+  amountDue            Int
+  amountPaid           Int
+  hostedInvoiceUrl     String?
+  invoicePdf           String?
+  periodStart          DateTime?
+  periodEnd            DateTime?
+  issuedAt             DateTime?
+  paidAt               DateTime?
+  syncedAt             Int       @default(0)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([companyId, issuedAt])
+  @@map("invoices")
 }
 
