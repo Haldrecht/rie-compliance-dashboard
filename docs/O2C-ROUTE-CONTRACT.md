@@ -1,6 +1,10 @@
 # Dashboard entry-route contract (for the marketing website)
 
-Status date: 2026-11-23. Branch `feat/o2c-vertical-slice` (draft PR #1). **Not deployed anywhere.**
+Reviewed 2026-11-24 against implementation `0432db3be861e8b574b110fa4d5ba81933d4b09c`,
+published branch `feat/o2c-vertical-slice` ([draft PR #1](https://github.com/Haldrecht/rie-compliance-dashboard/pull/1)).
+Local worktree branch: `feat/o2c-vertical-slice-haldrecht`. No staging deployment or genuine Stripe
+purchase is evidenced. Deployment statements below describe the previous engineering record, not a fresh
+production probe. See [the Codex handoff](O2C-CODEX-HANDOFF.md) for verification provenance and ownership.
 
 > **Purchase links on the website must stay disabled** until the full journey has passed on staging with a
 > real Stripe test-mode purchase (see "Release gate" below). Until then the website keeps `appUrl` empty.
@@ -9,14 +13,14 @@ Status date: 2026-11-23. Branch `feat/o2c-vertical-slice` (draft PR #1). **Not d
 
 | Route | Locally (browser test, production build, Postgres, Stripe **stand-in**) | Staging (real Stripe test mode) | Production |
 | --- | --- | --- | --- |
-| `/register` | Verified | **Not verified** (no staging exists) | Old build: shows "registration disabled" |
-| `/login` | Verified | **Not verified** | Old build, no database configured: login cannot succeed |
-| `/billing` | Verified | **Not verified** | Does not exist |
+| `/register` | Verified in CI at the implementation SHA above | **Not verified** | Previously recorded: old build shows "registration disabled" |
+| `/login` | Verified in CI at the implementation SHA above | **Not verified** | Previously recorded: old build has no database configured |
+| `/billing` | Verified in CI at the implementation SHA above | **Not verified** | Previously recorded: route absent |
 
 ## Origin
 
-There is **no verified HTTPS dashboard origin yet**. The production URL serves an older build, and no staging
-deployment exists. The website's `appUrl` must remain empty until the release gate passes; at that point this
+There is **no verified HTTPS dashboard origin in the handoff evidence**. The previous record says production
+serves an older build and staging has not been created. The website's `appUrl` must remain empty until the release gate passes; at that point this
 document will name the verified origin. The origin will be a bare `https://` origin (the website rejects
 anything else, and Stripe webhooks require https).
 
