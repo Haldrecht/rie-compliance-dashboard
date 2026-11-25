@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { verifyPassword, generateToken } from '@/lib/auth';
+import { loadEntitlement } from '@/lib/tenant';
 import { z } from 'zod';
 
 const loginSchema = z.object({
@@ -22,26 +23,28 @@ export async function POST(request: NextRequest) {
 
     if (!validation.success) {
       return NextResponse.json(
-        { error: 'Ongeldige gegevens', details: validation.error.errors },
+        { error: 'Ongeldige gegevens', details: validation.error.issues },
         { status: 400 }
       );
     }
 
     const { email, password } = validation.data;
 
-    // Find user with password
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        password: true,
-        role: true,
-        companyId: true,
-        onboardingCompleted: true,
-      },
-    });
+    // Find user with password (self-registered emails are stored lower-case)
+    const userSelect = {
+      id: true,
+      email: true,
+      name: true,
+      password: true,
+      role: true,
+      companyId: true,
+      onboardingCompleted: true,
+    } as const;
+    const user =
+      (await prisma.user.findUnique({ where: { email }, select: userSelect })) ??
+      (email !== email.toLowerCase()
+        ? await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: userSelect })
+        : null);
 
     if (!user) {
       return NextResponse.json(
@@ -60,19 +63,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check license status (ADMIN users don't need licenses)
-    if (user.role !== 'ADMIN') {
-      const license = await prisma.license.findUnique({
-        where: { userId: user.id },
-        select: { status: true, expiresAt: true },
-      });
-
-      if (!license || license.status !== 'ACTIVE' || (license.expiresAt && new Date(license.expiresAt) < new Date())) {
-        return NextResponse.json(
-          { error: 'Geen actieve licentie. Neem contact op met de beheerder.' },
-          { status: 403 }
-        );
-      }
+    // Access is decided per request by the tenant guard. Signing in is allowed for members of an
+    // organization even before payment, so they can reach checkout; users with neither an organization
+    // nor an active license (and not ADMIN) still cannot sign in, as before.
+    const access = await loadEntitlement(user.id);
+    if (!access?.entitlement.entitled && !user.companyId) {
+      return NextResponse.json(
+        { error: 'Geen actieve licentie. Neem contact op met de beheerder.' },
+        { status: 403 }
+      );
     }
 
     // Generate JWT token
@@ -90,6 +89,7 @@ export async function POST(request: NextRequest) {
       message: 'Inloggen succesvol',
       user: userWithoutPassword,
       token,
+      entitlement: access?.entitlement ?? { entitled: false, reason: 'no_subscription' },
     });
   } catch (error: any) {
     console.error('Login error:', error);

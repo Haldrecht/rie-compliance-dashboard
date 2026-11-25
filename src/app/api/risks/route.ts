@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getUserFromRequest, requireAuth } from '@/lib/auth';
+import { withCustomer } from '@/lib/tenant';
 import { calculateRiskLevel } from '@/lib/utils';
 
 // GET /api/risks - Get all risks for the company
-export const GET = requireAuth(async (request: NextRequest, user) => {
+export const GET = withCustomer(async (request: NextRequest, user) => {
   try {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category');
@@ -40,7 +40,7 @@ export const GET = requireAuth(async (request: NextRequest, user) => {
           }
         }
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdDate: 'desc' }, // Risk has createdDate, not createdAt
       skip: (page - 1) * limit,
       take: limit,
     });
@@ -66,7 +66,7 @@ export const GET = requireAuth(async (request: NextRequest, user) => {
 });
 
 // POST /api/risks - Create a new risk
-export const POST = requireAuth(async (request: NextRequest, user) => {
+export const POST = withCustomer(async (request: NextRequest, user) => {
   try {
     const body = await request.json();
     const {
@@ -90,6 +90,13 @@ export const POST = requireAuth(async (request: NextRequest, user) => {
         { error: 'Missing required fields' },
         { status: 400 }
       );
+    }
+
+    // The assessment must belong to the caller's organization.
+    const ownsAssessment = typeof assessmentId === 'string'
+      && await prisma.assessment.count({ where: { id: assessmentId, companyId: user.companyId } }) === 1;
+    if (!ownsAssessment) {
+      return NextResponse.json({ error: 'Assessment not found' }, { status: 404 });
     }
 
     // Calculate risk level

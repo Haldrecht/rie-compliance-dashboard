@@ -106,6 +106,8 @@ model Company {
   assessments Assessment[]
   risks       Risk[]
   actions     Action[]
+  subscription Subscription?
+  invoices     Invoice[]
 
   @@map("companies")
 }
@@ -271,3 +273,80 @@ model License {
 
   @@map("licenses")
 }
+
+// ---------------------------------------------------------------------------
+// Order-to-cash: organization subscription entitlement driven by Stripe.
+// Stripe is the source of truth; these rows are a synced cache that gates access.
+// ---------------------------------------------------------------------------
+
+enum SubscriptionStatus {
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  PAUSED
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  companyId            String             @unique
+  company              Company            @relation(fields: [companyId], references: [id])
+  stripeSubscriptionId String             @unique
+  stripeCustomerId     String
+  stripePriceId        String?
+  status               SubscriptionStatus
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  // Stripe object version we last applied (event.created / fetch time, unix seconds).
+  // Older snapshots are ignored so out-of-order delivery cannot roll state back.
+  syncedAt             Int                @default(0)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@map("subscriptions")
+}
+
+// Processed Stripe webhook events, for duplicate-delivery idempotency.
+model StripeEvent {
+  id          String   @id // Stripe event id (evt_...)
+  type        String
+  outcome     String   // processed | ignored
+  detail      String?
+  processedAt DateTime @default(now())
+
+  @@map("stripe_events")
+}
+
+// Stripe invoices for the organization (synced copy; Stripe remains the source of truth).
+// Amounts are in the smallest currency unit (cents).
+model Invoice {
+  id                   String    @id @default(cuid())
+  companyId            String
+  company              Company   @relation(fields: [companyId], references: [id])
+  stripeInvoiceId      String    @unique
+  stripeSubscriptionId String?
+  number               String?
+  status               String    // draft | open | paid | uncollectible | void
+  currency             String
+  subtotal             Int
+  tax                  Int       @default(0)
+  total                Int
+  amountDue            Int
+  amountPaid           Int
+  hostedInvoiceUrl     String?
+  invoicePdf           String?
+  periodStart          DateTime?
+  periodEnd            DateTime?
+  issuedAt             DateTime?
+  paidAt               DateTime?
+  syncedAt             Int       @default(0)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([companyId, issuedAt])
+  @@map("invoices")
+}
+

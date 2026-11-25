@@ -11,6 +11,9 @@ import { ActionManagement } from '@/components/dashboard/ActionManagement';
 import { DashboardData, ComplianceOverview as ComplianceOverviewType, RiskCategoryStats, Action } from '@/lib/types';
 
 // Mock data for development - using date strings instead of Date objects
+// Sample data, shown only on deployments with NEXT_PUBLIC_DEMO_MODE=true and always under a demo banner.
+const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
+
 const getMockDashboardData = (): DashboardData => ({
   complianceOverview: {
     overallScore: 78,
@@ -105,6 +108,7 @@ export default function DashboardPage() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isDemo, setIsDemo] = useState(false);
 
   // Check if user needs to complete onboarding
   useEffect(() => {
@@ -146,11 +150,18 @@ export default function DashboardPage() {
         });
 
         if (!response.ok) {
-          if (response.status === 401) {
+          if (response.status === 402) {
+            // No paid subscription for this organization (yet): go to checkout.
+            router.push('/billing');
+            return;
+          } else if (response.status === 401) {
             setError('Niet geautoriseerd. Log opnieuw in.');
-          } else if (response.status === 503) {
-            // Database not configured, use mock data
+          } else if (response.status === 503 && DEMO_MODE) {
+            // Explicitly labeled demo deployments only (NEXT_PUBLIC_DEMO_MODE=true).
+            setIsDemo(true);
             setDashboardData(getMockDashboardData());
+          } else if (response.status === 503) {
+            setError('De database is op dit moment niet bereikbaar. Uw gegevens zijn niet beschikbaar; probeer het later opnieuw.');
           } else {
             throw new Error('Fout bij het laden van dashboard gegevens');
           }
@@ -178,9 +189,9 @@ export default function DashboardPage() {
         }
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
+        // Never substitute sample data for a customer's own data.
         setError(error instanceof Error ? error.message : 'Onbekende fout');
-        // Fallback to mock data on error
-        setDashboardData(getMockDashboardData());
+        setDashboardData(null);
       } finally {
         setLoading(false);
       }
@@ -227,9 +238,14 @@ export default function DashboardPage() {
       <div className="min-h-screen bg-gray-50">
         <Sidebar />
         <div className="lg:pl-64">
+          {isDemo && (
+            <div role="status" className="mx-4 mt-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
+              <p className="text-blue-800 text-sm font-medium">Demo-omgeving: dit zijn voorbeeldgegevens, geen gegevens van uw organisatie.</p>
+            </div>
+          )}
           {error && (
-            <div className="mx-4 mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
-              <p className="text-yellow-800 text-sm">{error}</p>
+            <div role="alert" className="mx-4 mt-4 p-4 bg-red-50 border border-red-200 rounded-md">
+              <p className="text-red-800 text-sm">{error}</p>
             </div>
           )}
         <main className="py-6">

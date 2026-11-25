@@ -3,8 +3,16 @@ import bcrypt from 'bcryptjs';
 import { NextRequest } from 'next/server';
 import { User } from './types';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+
+// A known fallback secret would let anyone forge tokens for any organization, so production refuses
+// to sign or verify without JWT_SECRET. The fallback remains for local development only.
+function jwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (secret) return secret;
+  if (process.env.NODE_ENV === 'production') throw new Error('JWT_SECRET is not configured');
+  return 'fallback-secret-key';
+}
 
 export interface JWTPayload {
   userId: string;
@@ -24,12 +32,12 @@ export async function verifyPassword(password: string, hashedPassword: string): 
 }
 
 export function generateToken(payload: JWTPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign(payload, jwtSecret(), { expiresIn: JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] });
 }
 
 export function verifyToken(token: string): JWTPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as JWTPayload;
+    return jwt.verify(token, jwtSecret()) as JWTPayload;
   } catch (error) {
     return null;
   }

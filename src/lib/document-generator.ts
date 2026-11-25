@@ -13,6 +13,13 @@ export interface RIEReportData {
   assessor: string;
 }
 
+// Measures are stored as JSON and may be null, a string, or a list (wizard-created risks).
+function measures(value: unknown): string {
+  if (Array.isArray(value)) return value.filter(Boolean).join(', ') || 'Geen';
+  if (typeof value === 'string') return value.trim() || 'Geen';
+  return 'Geen';
+}
+
 export class DocumentGenerator {
   static async generateRIEReport(data: RIEReportData): Promise<Blob> {
     const doc = new Document({
@@ -158,10 +165,10 @@ export class DocumentGenerator {
             text: `Blootgestelde medewerkers: ${risk.exposedEmployees}`,
           }),
           new Paragraph({
-            text: `Huidige maatregelen: ${risk.currentMeasures.join(', ') || 'Geen'}`,
+            text: `Huidige maatregelen: ${measures(risk.currentMeasures)}`,
           }),
           new Paragraph({
-            text: `Voorgestelde maatregelen: ${risk.proposedMeasures.join(', ') || 'Geen'}`,
+            text: `Voorgestelde maatregelen: ${measures(risk.proposedMeasures)}`,
           }),
           new Paragraph({ text: "" })
         );

@@ -9,9 +9,14 @@ const path = require('path');
 
 console.log('🔍 Verifying Prisma Client...\n');
 
-// Check if Prisma client exists
-const prismaClientPath = path.join(process.cwd(), 'node_modules', '@prisma', 'client', 'index.d.ts');
-if (!fs.existsSync(prismaClientPath)) {
+// Check if Prisma client exists. Prisma 5+/6 writes the generated types to
+// node_modules/.prisma/client; @prisma/client/index.d.ts only re-exports them.
+const candidates = [
+  path.join(process.cwd(), 'node_modules', '.prisma', 'client', 'index.d.ts'),
+  path.join(process.cwd(), 'node_modules', '@prisma', 'client', 'index.d.ts'),
+];
+const prismaClientPath = candidates.find((p) => fs.existsSync(p) && fs.readFileSync(p, 'utf8').includes('onboardingCompleted')) || candidates.find((p) => fs.existsSync(p));
+if (!prismaClientPath) {
   console.error('❌ Prisma client not found!');
   console.error('   Run: npx prisma generate --schema prisma/schema.postgres.prisma');
   process.exit(1);

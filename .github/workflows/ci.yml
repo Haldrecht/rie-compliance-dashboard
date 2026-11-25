@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: unit + integration (SQLite) and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npx next build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+
+  postgres:
+    name: integration + concurrency (Postgres 15) and migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: rie_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGPASSWORD: ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test suite on Postgres
+        run: npm test
+        env:
+          TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/rie_test
+      - name: Migrations apply to the pre-change schema, twice, with no drift
+        run: |
+          psql -h localhost -U ci -d postgres -c 'create database rie_migrate'
+          export DATABASE_URL=postgresql://ci:ci@localhost:5432/rie_migrate
+          git show origin/main:prisma/schema.postgres.prisma > /tmp/schema.main.prisma
+          npx prisma db push --schema /tmp/schema.main.prisma --skip-generate
+          for f in supabase/migrations/20261122200000_o2c_billing.sql supabase/migrations/20261123010000_o2c_invoices.sql; do
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.postgres.prisma --exit-code
+
+  e2e:
+    name: browser journey (Playwright, Postgres, Stripe stand-in)
+    # Playwright 1.56 does not support ubuntu-latest (26.04) yet.
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: rie_e2e
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      E2E_DATABASE_URL: postgresql://ci:ci@localhost:5432/rie_e2e
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx prisma db push --schema prisma/schema.postgres.prisma --skip-generate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/rie_e2e
+      - run: npx next build
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results
+          path: e2e-results/
+          retention-days: 14

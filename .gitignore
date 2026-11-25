@@ -116,3 +116,7 @@ prisma/dev.db-journal
 .env*
 !env.example
 *.db
+
+# Playwright
+/e2e-results/
+/playwright-report/

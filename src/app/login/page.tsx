@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Set once a login succeeds: login() then navigates by itself (to /billing when unpaid), so the
+  // "already signed in" redirect below must not race it to /dashboard.
+  const signedInHere = useRef(false);
   const { login, isAuthenticated, loading: authLoading } = useAuth();
   const router = useRouter();
 
@@ -47,7 +50,7 @@ export default function LoginPage() {
       return;
     }
     
-    if (!authLoading && isAuthenticated) {
+    if (!authLoading && isAuthenticated && !signedInHere.current) {
       router.push('/dashboard');
     }
   }, [isAuthenticated, authLoading, router]);
@@ -58,8 +61,10 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      signedInHere.current = true;
       await login(email, password);
     } catch (err) {
+      signedInHere.current = false;
       setError(err instanceof Error ? err.message : 'Inloggen mislukt');
     } finally {
       setLoading(false);

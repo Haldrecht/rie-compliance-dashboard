@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getUserFromRequest, requireAuth } from '@/lib/auth';
+import { withCustomer } from '@/lib/tenant';
 
 // GET /api/actions - Get all actions for the company
-export const GET = requireAuth(async (request: NextRequest, user) => {
+export const GET = withCustomer(async (request: NextRequest, user) => {
   try {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
@@ -78,7 +78,7 @@ export const GET = requireAuth(async (request: NextRequest, user) => {
 });
 
 // POST /api/actions - Create a new action
-export const POST = requireAuth(async (request: NextRequest, user) => {
+export const POST = withCustomer(async (request: NextRequest, user) => {
   try {
     const body = await request.json();
     const {
@@ -98,6 +98,17 @@ export const POST = requireAuth(async (request: NextRequest, user) => {
         { error: 'Missing required fields' },
         { status: 400 }
       );
+    }
+
+    // Linked records must belong to the caller's organization.
+    const companyId = user.companyId;
+    const [assessmentOk, riskOk, assigneeOk] = await Promise.all([
+      assessmentId ? prisma.assessment.count({ where: { id: String(assessmentId), companyId } }).then((n: number) => n === 1) : true,
+      riskId ? prisma.risk.count({ where: { id: String(riskId), companyId } }).then((n: number) => n === 1) : true,
+      assignedToId ? prisma.user.count({ where: { id: String(assignedToId), companyId } }).then((n: number) => n === 1) : true,
+    ]);
+    if (!assessmentOk || !riskOk || !assigneeOk) {
+      return NextResponse.json({ error: 'Linked record not found' }, { status: 404 });
     }
 
     const action = await prisma.action.create({
